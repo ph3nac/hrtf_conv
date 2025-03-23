@@ -1,15 +1,130 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+<additional_info>
+
+</additional_info>
+
+</file_summary>
+
+<directory_structure>
+.cargo/
+  config
+src/
+  editor.rs
+  lib.rs
+xtask/
+  src/
+    main.rs
+  Cargo.toml
+.gitignore
+bundler.toml
+Cargo.toml
+README.md
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path=".cargo/config">
+[alias]
+xtask = "run --package xtask --release --"
+</file>
+
+<file path="src/editor.rs">
+use nih_plug::editor::Editor;
+use nih_plug_vizia::vizia::prelude::*;
+use nih_plug_vizia::widgets::{ParamSlider, ResizeHandle};
+use nih_plug_vizia::{create_vizia_editor, ViziaState, ViziaTheming};
+use std::sync::Arc;
+
+use crate::HrtfConvParams;
+
+#[derive(Lens)]
+struct Data {
+    params: Arc<HrtfConvParams>,
+}
+
+impl Model for Data {}
+
+pub(crate) fn default_state() -> Arc<ViziaState> {
+    ViziaState::new(|| (200, 150))
+}
+
+pub(crate) fn create(
+    params: Arc<HrtfConvParams>,
+    editor_state: Arc<ViziaState>,
+) -> Option<Box<dyn Editor>> {
+    create_vizia_editor(editor_state, ViziaTheming::default(), move |cx, _| {
+        Data {
+            params: params.clone(),
+        }
+        .build(cx);
+
+        VStack::new(cx, |cx| {
+            Label::new(cx, "Gain GUI")
+                .font_weight(FontWeightKeyword::Thin)
+                .font_size(30.0)
+                .height(Pixels(50.0))
+                .child_top(Stretch(1.0))
+                .child_bottom(Pixels(0.0));
+            Label::new(cx, "Gain");
+            ParamSlider::new(cx, Data::params, |params| &params.gain);
+        })
+        .row_between(Pixels(0.0))
+        .child_left(Stretch(1.0))
+        .child_right(Pixels(1.0));
+        ResizeHandle::new(cx);
+    })
+}
+</file>
+
+<file path="src/lib.rs">
 use nih_plug::prelude::*;
 use nih_plug_vizia::ViziaState;
 use sofar::{
     reader::{Filter, OpenOptions, Sofar},
     render::Renderer,
 };
-use std::{io::Cursor, sync::Arc};
+use std::sync::Arc;
 mod editor;
 
 const PARTITION_LEN: usize = 64;
-
-static SOFA_DATA: &[u8] = include_bytes!("assets/mit_kemar_normal_pinna.sofa");
 
 // parameters and gui state
 #[derive(Params)]
@@ -124,13 +239,12 @@ impl Plugin for HrtfConv {
         buffer_config: &BufferConfig,
         _context: &mut impl InitContext<Self>,
     ) -> bool {
-        let cursor = Cursor::new(SOFA_DATA);
+        let sofa_path = "assets/mit_kemar_normal_pinna.sofa";
         let sofa = OpenOptions::new()
             .sample_rate(buffer_config.sample_rate)
-            .open_data(cursor.get_ref());
+            .open(sofa_path);
         if sofa.is_err() {
-            nih_error!("Failed to open HRTF data");
-            return false;
+            nih_error!("Failed to open SOFA file: {}", sofa_path);
         }
         let sofa = sofa.unwrap();
 
@@ -144,7 +258,6 @@ impl Plugin for HrtfConv {
             .build();
         if render.is_err() {
             nih_error!("Failed to create HRTF renderer");
-            return false;
         }
         let mut render = render.unwrap();
 
@@ -194,7 +307,7 @@ impl Plugin for HrtfConv {
 
         let (left_chan, right_chan) = channels.split_at_mut(1);
         let left_out = &mut left_chan[0][..num_samples];
-        let right_out = &mut right_chan[0][..num_samples];
+        let right_out = &mut right_chan[1][..num_samples];
 
         if let Err(e) = render.process_block(&self.scratch_buffer, left_out, right_out) {
             nih_error!("HRTF render error:{}", e);
@@ -225,3 +338,87 @@ impl Vst3Plugin for HrtfConv {
 
 nih_export_clap!(HrtfConv);
 nih_export_vst3!(HrtfConv);
+</file>
+
+<file path="xtask/src/main.rs">
+fn main() -> nih_plug_xtask::Result<()> {
+    nih_plug_xtask::main()
+}
+</file>
+
+<file path="xtask/Cargo.toml">
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nih_plug_xtask = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+</file>
+
+<file path=".gitignore">
+/target
+</file>
+
+<file path="bundler.toml">
+# This provides metadata for NIH-plug's `cargo xtask bundle <foo>` plugin
+# bundler. This file's syntax is as follows:
+#
+# [package_name]
+# name = "Human Readable Plugin Name"  # defaults to <package_name>
+
+[hrtf_conv]
+name = "Hrtf Conv"
+</file>
+
+<file path="Cargo.toml">
+[package]
+name = "hrtf_conv"
+version = "0.1.0"
+edition = "2021"
+authors = ["ph3nac <ph3nac@gmail.com>"]
+license = "GPL-3.0-or-later"
+homepage = "ph3nac.com"
+description = "A short description of your plugin"
+
+[workspace]
+members = ["xtask"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Remove the `assert_process_allocs` feature to allow allocations on the audio
+# thread in debug builds.
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = [
+    "assert_process_allocs",
+] }
+nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+sofar = "0.2.1"
+# Uncomment the below line to disable the on-by-default VST3 feature to remove
+# the GPL compatibility requirement
+# nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", default-features = false, features = ["assert_process_allocs"] }
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
+
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"
+</file>
+
+<file path="README.md">
+# Hrtf Conv
+
+## Building
+
+After installing [Rust](https://rustup.rs/), you can compile Hrtf Conv as follows:
+
+```shell
+cargo xtask bundle hrtf_conv --release
+```
+</file>
+
+</files>
