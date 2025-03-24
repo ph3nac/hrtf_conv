@@ -7,7 +7,7 @@ use sofar::{
 use std::{io::Cursor, sync::Arc};
 mod editor;
 
-const PARTITION_LEN: usize = 64;
+const PARTITION_LEN: usize = 32;
 
 static SOFA_DATA: &[u8] = include_bytes!("assets/mit_kemar_normal_pinna.sofa");
 
@@ -16,8 +16,47 @@ static SOFA_DATA: &[u8] = include_bytes!("assets/mit_kemar_normal_pinna.sofa");
 struct HrtfConvParams {
     #[persist = "editor-state"]
     editor_state: Arc<ViziaState>,
-    #[id = "gain"]
-    pub gain: FloatParam,
+    #[id = "azimuth"]
+    pub azimuth: FloatParam,
+    #[id = "elevation"]
+    pub elevation: FloatParam,
+    #[id = "distance"]
+    pub distance: FloatParam,
+}
+
+impl Default for HrtfConvParams {
+    fn default() -> Self {
+        Self {
+            editor_state: editor::default_state(),
+
+            azimuth: FloatParam::new(
+                "Azimuth",
+                0.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 359.0,
+                },
+            )
+            .with_unit("°")
+            .with_smoother(SmoothingStyle::Logarithmic(50.0))
+            .with_step_size(0.01),
+            elevation: FloatParam::new(
+                "Elevation",
+                0.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 180.0,
+                },
+            )
+            .with_unit("°")
+            .with_smoother(SmoothingStyle::Logarithmic(50.0))
+            .with_step_size(0.01),
+            distance: FloatParam::new("Distance", 1.0, FloatRange::Linear { min: 0.1, max: 1.0 })
+                .with_unit("m")
+                .with_smoother(SmoothingStyle::Logarithmic(50.0))
+                .with_step_size(0.05),
+        }
+    }
 }
 
 // plugin struct
@@ -27,6 +66,7 @@ struct HrtfConv {
     filter: Option<Filter>,
     renderer: Option<Renderer>,
     scratch_buffer: Vec<f32>,
+    last_direction: (f32, f32, f32),
 }
 
 impl Default for HrtfConv {
@@ -38,37 +78,7 @@ impl Default for HrtfConv {
             filter: None,
             renderer: None,
             scratch_buffer: vec![],
-        }
-    }
-}
-
-impl Default for HrtfConvParams {
-    fn default() -> Self {
-        Self {
-            editor_state: editor::default_state(),
-            // This gain is stored as linear gain. NIH-plug comes with useful conversion functions
-            // to treat these kinds of parameters as if we were dealing with decibels. Storing this
-            // as decibels is easier to work with, but requires a conversion for every sample.
-            gain: FloatParam::new(
-                "Gain",
-                util::db_to_gain(0.0),
-                FloatRange::Skewed {
-                    min: util::db_to_gain(-30.0),
-                    max: util::db_to_gain(30.0),
-                    // This makes the range appear as if it was linear when displaying the values as
-                    // decibels
-                    factor: FloatRange::gain_skew_factor(-30.0, 30.0),
-                },
-            )
-            // Because the gain parameter is stored as linear gain instead of storing the value as
-            // decibels, we need logarithmic smoothing
-            .with_smoother(SmoothingStyle::Logarithmic(50.0))
-            .with_unit(" dB")
-            // There are many predefined formatters we can use here. If the gain was stored as
-            // decibels instead of as a linear gain value, we could have also used the
-            // `.with_step_size(0.1)` function to get internal rounding.
-            .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
-            .with_string_to_value(formatters::s2v_f32_gain_to_db()),
+            last_direction: (0.0, 0.0, 0.0),
         }
     }
 }
@@ -135,8 +145,19 @@ impl Plugin for HrtfConv {
         let sofa = sofa.unwrap();
 
         let filter_len = sofa.filter_len();
+
+        let az_deg = self.params.azimuth.value();
+        let el_deg = self.params.elevation.value();
+        let dist = self.params.distance.value();
+        let az = az_deg.to_radians();
+        let el = el_deg.to_radians();
+        let x = dist * (el.cos() * az.cos());
+        let y = dist * (el.cos() * az.sin());
+        let z = dist * el.sin();
+        let current_direction = (x, y, z);
+
         let mut filter = Filter::new(filter_len);
-        sofa.filter(0.0, 1.0, 0.0, &mut filter);
+        sofa.filter(x, y, z, &mut filter);
 
         let render = Renderer::builder(filter_len)
             .with_sample_rate(buffer_config.sample_rate)
@@ -153,6 +174,7 @@ impl Plugin for HrtfConv {
         self.sofa = Some(sofa);
         self.filter = Some(filter);
         self.renderer = Some(render);
+        self.last_direction = current_direction;
 
         self.scratch_buffer.clear();
         self.scratch_buffer
@@ -179,6 +201,30 @@ impl Plugin for HrtfConv {
             Some(r) => r,
             None => return ProcessStatus::Normal,
         };
+
+        let az_deg = self.params.azimuth.value();
+        let el_deg = self.params.elevation.value();
+        let dist = self.params.distance.value();
+        let az = az_deg.to_radians();
+        let el = el_deg.to_radians();
+        let x = dist * (el.cos() * az.cos());
+        let y = dist * (el.cos() * az.sin());
+        let z = dist * el.sin();
+        let current_direction = (x, y, z);
+
+        if current_direction != self.last_direction {
+            if let Some(sofa) = self.sofa.as_mut() {
+                if let Some(filter) = self.filter.as_mut() {
+                    sofa.filter(x, y, z, filter);
+                    if let Err(e) = render.set_filter(filter) {
+                        nih_error!("Failed to set filter:{}", e);
+                        return ProcessStatus::Error("HRTF processing failed");
+                    }
+
+                    self.last_direction = current_direction;
+                }
+            }
+        }
 
         let num_samples = buffer.samples();
         let channels = buffer.as_slice();
