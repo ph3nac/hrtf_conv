@@ -1,6 +1,6 @@
 use nih_plug::editor::Editor;
 use nih_plug_vizia::vizia::prelude::*;
-use nih_plug_vizia::widgets::{ParamSlider, ParamSliderExt, ResizeHandle};
+use nih_plug_vizia::widgets::{ParamSlider, ParamSliderExt};
 use nih_plug_vizia::{create_vizia_editor, ViziaState, ViziaTheming};
 use std::sync::Arc;
 
@@ -41,6 +41,6 @@ pub(crate) fn create(
                 .border_radius("10")
                 .size(Stretch(10.0));
         });
-        ResizeHandle::new(cx);
+        // ResizeHandle::new(cx);
     })
 }
